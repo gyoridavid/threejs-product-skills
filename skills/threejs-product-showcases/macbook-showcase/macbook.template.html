@@ -1,0 +1,995 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>__TITLE__</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      #stage {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        opacity: 0;
+        transition: opacity 0.9s ease;
+      }
+
+      body.ready #stage,
+      body.capture #stage {
+        opacity: 1;
+        transition: none;
+      }
+
+      #source-video {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 2px;
+        height: 2px;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #loader {
+        position: fixed;
+        left: 50%;
+        bottom: 30px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        z-index: 10;
+        font: 500 10px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.42);
+        transition: opacity 0.6s ease;
+        white-space: nowrap;
+      }
+
+      #loader.hidden {
+        opacity: 0;
+      }
+
+      body.capture #loader {
+        display: none;
+      }
+
+      #loader.error {
+        color: #ff9b9b;
+        opacity: 1;
+      }
+
+      .spinner {
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(255, 255, 255, 0.16);
+        border-top-color: rgba(255, 255, 255, 0.72);
+        animation: spin 0.9s linear infinite;
+      }
+
+      #loader.error .spinner {
+        animation: none;
+        border-color: rgba(255, 155, 155, 0.3);
+        border-top-color: #ff9b9b;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(1turn);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage" role="img" aria-label="__ARIA_LABEL__"></canvas>
+
+    <video
+      id="source-video"
+      muted
+      loop
+      playsinline
+      preload="auto"
+      aria-hidden="true"
+    ></video>
+
+    <div id="loader" role="status" aria-live="polite">
+      <span class="spinner"></span>
+      <span id="loader-text">Preparing scene</span>
+    </div>
+
+    <script>
+      // If the CDN modules cannot load (e.g. offline), say so instead of
+      // leaving the loading label up forever.
+      window.__showcaseBooted = false;
+      window.setTimeout(function () {
+        if (window.__showcaseBooted) return;
+        var loader = document.getElementById("loader");
+        loader.classList.add("error");
+        document.getElementById("loader-text").textContent =
+          "Three.js could not load — internet access is required";
+      }, 12000);
+    </script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <!-- build.py replaces the placeholders below with the config, the model
+         and the screen content (one video or one or more screenshot tiles). -->
+    <script id="showcase-config" type="application/json">__CONFIG_JSON__</script>
+    <script id="macbook-glb-data" type="text/plain">__MACBOOK_GLB_BASE64__</script>
+    <!-- __SCREEN_DATA__ -->
+
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
+
+      window.__showcaseBooted = true;
+
+      /* ------------------------------------------------------------------ */
+      /* Settings                                                           */
+      /* ------------------------------------------------------------------ */
+
+      const CONFIG = JSON.parse(
+        document.getElementById("showcase-config").textContent,
+      );
+      const SCREEN = JSON.parse(
+        document.getElementById("screen-manifest").textContent,
+      );
+
+      // `?t=12.5` renders one still at 12.5 s. `?capture` waits for
+      // `window.showcase.renderAt(t)` calls (video export). Neither runs a
+      // wall-clock loop.
+      const params = new URLSearchParams(location.search);
+      const FROZEN_T = params.has("t") ? parseFloat(params.get("t")) : null;
+      const CAPTURE = params.has("capture") || FROZEN_T !== null;
+      if (CAPTURE) document.body.classList.add("capture");
+
+      // Camera: push in, then a slow dolly that lasts as long as the content.
+      const INTRO_DELAY = 0.1;
+      const INTRO_DURATION = 4.0;
+      const DOLLY_CLOSER = 0.94; // final distance as a fraction of the settled one
+
+      // Screenshot scroll. The speed is in page pixels per second at a
+      // 1300 px page width, so it reads the same for any page length.
+      const SCROLL_DELAY = 3.6; // starts as the camera settles
+      const SCROLL_SPEED = CONFIG.scrollSpeed ?? 250;
+      const SCROLL_EASE = 2.5; // seconds to reach full speed, and to stop
+
+      // Video content: how long the camera keeps drifting before it holds.
+      const VIDEO_DRIFT = 14;
+
+      /* ------------------------------------------------------------------ */
+      /* Small helpers                                                      */
+      /* ------------------------------------------------------------------ */
+
+      const clamp01 = (v) => Math.min(1, Math.max(0, v));
+      const smoothstep = (v) => {
+        const x = clamp01(v);
+        return x * x * (3 - 2 * x);
+      };
+      const lerp = (a, b, t) => a + (b - a) * t;
+
+      const loaderEl = document.getElementById("loader");
+      const setLoaderText = (text) => {
+        document.getElementById("loader-text").textContent = text;
+      };
+
+      function showError(error) {
+        console.error(error);
+        loaderEl.classList.add("error");
+        setLoaderText("Could not build the scene — check the console");
+      }
+
+      function readInlineBytes(el) {
+        const text = el.textContent.replace(/\s+/g, "");
+        el.textContent = "";
+        const binary = atob(text);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+      }
+
+      const blobUrl = (bytes, type) =>
+        URL.createObjectURL(new Blob([bytes], { type }));
+
+      function hexToRgb(hex) {
+        const h = hex.replace("#", "");
+        const n = parseInt(h.length === 3 ? h.replace(/./g, "$&$&") : h, 16);
+        return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+      }
+
+      const luminance = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+      function rgbToHsv([r, g, b]) {
+        const max = Math.max(r, g, b);
+        const d = max - Math.min(r, g, b);
+        let h = 0;
+        if (d > 0) {
+          if (max === r) h = ((g - b) / d) % 6;
+          else if (max === g) h = (b - r) / d + 2;
+          else h = (r - g) / d + 4;
+          h /= 6;
+          if (h < 0) h += 1;
+        }
+        return [h, max === 0 ? 0 : d / max, max];
+      }
+
+      function hsvToRgb([h, s, v]) {
+        const i = Math.floor(h * 6);
+        const f = h * 6 - i;
+        const p = v * (1 - s);
+        const q = v * (1 - f * s);
+        const t = v * (1 - (1 - f) * s);
+        return [
+          [v, q, p, p, t, v][i % 6],
+          [t, v, v, q, p, p][i % 6],
+          [p, p, t, v, v, q][i % 6],
+        ];
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Palette: sample the screen content so the set matches it           */
+      /* ------------------------------------------------------------------ */
+
+      /**
+       * Reads a small copy of the screen content and returns its average
+       * colour and its strongest accent: the hue bin with the most saturated,
+       * bright pixels. A tall page is sampled top to bottom, so the accent is
+       * the page's brand colour rather than whatever the hero happens to be.
+       */
+      function samplePalette(sources) {
+        const bins = Array.from({ length: 24 }, () => ({ w: 0, r: 0, g: 0, b: 0 }));
+        let r = 0, g = 0, b = 0, n = 0;
+
+        for (const { image, width, height } of sources) {
+          const w = 48;
+          const h = Math.max(1, Math.min(1600, Math.round((w * height) / width)));
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          ctx.drawImage(image, 0, 0, w, h);
+          const data = ctx.getImageData(0, 0, w, h).data;
+
+          for (let i = 0; i < data.length; i += 4) {
+            const rgb = [data[i] / 255, data[i + 1] / 255, data[i + 2] / 255];
+            r += rgb[0]; g += rgb[1]; b += rgb[2]; n++;
+            const [hue, sat, val] = rgbToHsv(rgb);
+            if (sat < 0.3 || val < 0.3) continue;
+            const weight = sat * val * val;
+            const bin = bins[Math.floor(hue * 24) % 24];
+            bin.w += weight;
+            bin.r += rgb[0] * weight;
+            bin.g += rgb[1] * weight;
+            bin.b += rgb[2] * weight;
+          }
+        }
+
+        let best = -1, bestScore = 0;
+        for (let i = 0; i < 24; i++) {
+          const score = bins[i].w + 0.5 * (bins[(i + 23) % 24].w + bins[(i + 1) % 24].w);
+          if (score > bestScore) { bestScore = score; best = i; }
+        }
+        const average = [r / n, g / n, b / n];
+        let accent = null;
+        if (best >= 0 && bins[best].w / n > 0.002) {
+          const bin = bins[best];
+          accent = [bin.r / bin.w, bin.g / bin.w, bin.b / bin.w];
+        }
+        return { average, accent };
+      }
+
+      /** Turns the sample (plus any explicit overrides) into backdrop colours. */
+      function derivePalette(sample) {
+        const average = sample?.average ?? [0.05, 0.05, 0.06];
+        const dark = CONFIG.theme
+          ? CONFIG.theme === "dark"
+          : luminance(average) < 0.45;
+
+        let base;
+        if (CONFIG.base) {
+          base = hexToRgb(CONFIG.base);
+        } else if (dark) {
+          // A near-black that keeps a trace of the page's hue.
+          const [h, s] = rgbToHsv(average);
+          base = hsvToRgb([h, Math.min(s, 0.35), 0.045]);
+        } else {
+          // A soft, slightly deeper version of the page's light background.
+          const [h, s, v] = rgbToHsv(average);
+          base = hsvToRgb([h, Math.min(s, 0.12), Math.min(0.93, v * 0.96)]);
+        }
+
+        let accent;
+        if (CONFIG.accent) {
+          accent = hexToRgb(CONFIG.accent);
+        } else if (sample?.accent) {
+          const [h, s, v] = rgbToHsv(sample.accent);
+          accent = hsvToRgb([h, Math.max(s, 0.55), Math.max(v, dark ? 0.9 : 0.75)]);
+        } else {
+          accent = dark ? [0.62, 0.66, 0.78] : [0.42, 0.46, 0.58];
+        }
+
+        return { dark, base, accent };
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Backdrops                                                          */
+      /* ------------------------------------------------------------------ */
+
+      const BACKDROPS = { beams: 0, tunnel: 1, gradient: 2 };
+
+      /**
+       * One full-screen shader, three looks:
+       *  - beams:    shafts of the accent colour falling from above the laptop,
+       *              with a soft glow behind it (default).
+       *  - tunnel:   rounded-rectangle ribs in the accent colour around a white
+       *              portal that opens during the push-in.
+       *  - gradient: a quiet radial gradient with an accent glow.
+       * Colours are written straight to the framebuffer (display-referred), so
+       * they match the sRGB values sampled from the screen content.
+       */
+      function createBackdrop(palette) {
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+        const material = new THREE.ShaderMaterial({
+          depthTest: false,
+          depthWrite: false,
+          uniforms: {
+            uMode: { value: BACKDROPS[CONFIG.backdrop] ?? 0 },
+            uProgress: { value: 0 },
+            uTime: { value: 0 },
+            uAspect: { value: 1 },
+            uDark: { value: palette.dark ? 1 : 0 },
+            uBase: { value: new THREE.Vector3(...palette.base) },
+            uAccent: { value: new THREE.Vector3(...palette.accent) },
+            uGrain: { value: CONFIG.grain === false ? 0 : 1 },
+          },
+          vertexShader: /* glsl */ `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = vec4(position.xy, 0.0, 1.0);
+            }
+          `,
+          fragmentShader: /* glsl */ `
+            precision highp float;
+
+            varying vec2 vUv;
+            uniform int uMode;
+            uniform float uProgress;
+            uniform float uTime;
+            uniform float uAspect;
+            uniform float uDark;
+            uniform vec3 uBase;
+            uniform vec3 uAccent;
+            uniform float uGrain;
+
+            float hash(vec2 p) {
+              return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+            }
+
+            float sdRoundBox(vec2 p, vec2 b, float r) {
+              vec2 q = abs(p) - b + r;
+              return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+            }
+
+            // Adds light on a dark set; tints towards the accent on a light one.
+            vec3 addLight(vec3 col, vec3 light, float amount) {
+              return uDark > 0.5
+                ? col + light * amount
+                : mix(col, light, clamp(amount * 0.9, 0.0, 1.0));
+            }
+
+            vec3 beams(vec2 p) {
+              vec3 col = uBase * (1.0 + (1.0 - length(p) * 0.9) * (uDark > 0.5 ? 0.9 : 0.05));
+              vec2 q = p - vec2(0.0, 0.75);
+              float ang = atan(q.x, -q.y);
+              float shafts = 0.0;
+              for (int i = 0; i < 5; i++) {
+                float fi = float(i);
+                float a = (fi - 2.0) * 0.21 + sin(uTime * 0.18 + fi * 1.7) * 0.035;
+                float w = 0.045 + 0.012 * fi;
+                shafts += exp(-pow((ang - a) / w, 2.0))
+                  * (0.55 + 0.45 * sin(uTime * 0.4 + fi * 2.1));
+              }
+              float fall = smoothstep(1.7, 0.1, length(q));
+              float reveal = 0.55 + 0.45 * uProgress;
+              col = addLight(col, uAccent, shafts * fall * 0.30 * reveal);
+              float glow = exp(-length((p - vec2(0.0, -0.02)) * vec2(0.8, 1.3)) * 3.2);
+              col = addLight(col, uAccent, glow * 0.16 * uProgress);
+              return col;
+            }
+
+            vec3 tunnel(vec2 p) {
+              p.y -= 0.08;
+              p.x += sin(p.y * 7.0 + uTime * 0.2) * 0.0045;
+              float prog = smoothstep(0.0, 1.0, uProgress);
+              float portalProg = pow(prog, 1.25);
+              vec2 halfPortal = mix(vec2(0.28, 0.18), vec2(0.55, 0.34), portalProg);
+              float corner = mix(0.08, 0.16, portalProg);
+              float d = sdRoundBox(p, halfPortal, corner);
+
+              float wave = sin(d * 195.0 - uTime * 1.1 + sin(d * 10.0) * 0.45);
+              float band = smoothstep(0.58, 0.98, wave * 0.5 + 0.5);
+              float glint = pow(max(wave, 0.0), 22.0);
+
+              vec3 recess = uAccent * 0.22;
+              vec3 col = mix(recess, uAccent, band);
+              col += uAccent * glint * 0.12;
+
+              float portal = 1.0 - smoothstep(-0.006, 0.012, d);
+              col = mix(col, vec3(1.0), portal);
+              float halo = (1.0 - smoothstep(0.0, 0.14, d)) * (1.0 - portal);
+              col = mix(col, vec3(0.94), halo * 0.35);
+              return col;
+            }
+
+            vec3 gradient(vec2 p) {
+              vec3 col = uBase * (1.0 + (1.0 - length(p)) * (uDark > 0.5 ? 1.2 : 0.06));
+              float glow = exp(-length((p - vec2(0.0, 0.02)) * vec2(0.7, 1.1)) * 2.6);
+              return addLight(col, uAccent, glow * 0.12 * uProgress);
+            }
+
+            void main() {
+              vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
+              vec3 col = uMode == 1 ? tunnel(p) : uMode == 2 ? gradient(p) : beams(p);
+
+              float vignette = smoothstep(0.55, 1.25, length(p));
+              col *= 1.0 - vignette * (uMode == 1 ? 0.28 : uDark > 0.5 ? 0.55 : 0.16);
+
+              // Fine animated grain, seeded by time so every frame is repeatable.
+              col += (hash(gl_FragCoord.xy + floor(uTime * 24.0)) - 0.5) * 0.018 * uGrain;
+              gl_FragColor = vec4(col, 1.0);
+            }
+          `,
+        });
+
+        const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+        quad.frustumCulled = false;
+        scene.add(quad);
+        return { scene, camera, material };
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Studio environment (reflections on the aluminium)                   */
+      /* ------------------------------------------------------------------ */
+
+      function createStudioEnvironment(renderer, accent) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2048;
+        canvas.height = 1024;
+        const ctx = canvas.getContext("2d");
+
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, "#3a4150");
+        sky.addColorStop(0.32, "#171b23");
+        sky.addColorStop(0.52, "#0b0d12");
+        sky.addColorStop(0.72, "#040507");
+        sky.addColorStop(1, "#010102");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const tint = accent.map((c) => Math.round((0.55 + 0.45 * c) * 255)).join(",");
+        const softbox = (cx, cy, rx, ry, alpha, rgb = "255,255,255") => {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(rx, ry);
+          const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+          g.addColorStop(0, `rgba(${rgb}, ${alpha})`);
+          g.addColorStop(0.5, `rgba(${rgb}, ${alpha * 0.72})`);
+          g.addColorStop(0.82, `rgba(${rgb}, ${alpha * 0.22})`);
+          g.addColorStop(1, `rgba(${rgb}, 0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(0, 0, 1, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        };
+
+        // Large overhead light, broad front panels, and an accent-tinted edge
+        // strip so the aluminium picks up a little of the set's colour.
+        softbox(1024, 150, 720, 190, 1.0);
+        softbox(1024, 470, 560, 170, 0.75);
+        softbox(280, 480, 120, 310, 0.5);
+        softbox(1770, 470, 100, 300, 0.42, tint);
+        softbox(640, 640, 300, 80, 0.18);
+        softbox(1440, 660, 320, 90, 0.14);
+
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(420, 352, 1200, 7);
+        ctx.globalAlpha = 0.3;
+        ctx.fillRect(700, 392, 640, 3);
+        ctx.globalAlpha = 1;
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        const envMap = pmrem.fromEquirectangular(texture).texture;
+        texture.dispose();
+        pmrem.dispose();
+        return envMap;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Screen content                                                     */
+      /* ------------------------------------------------------------------ */
+
+      function configureTexture(texture, renderer, mipmaps) {
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.minFilter = mipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.generateMipmaps = mipmaps;
+        texture.anisotropy = Math.min(16, renderer.capabilities.getMaxAnisotropy());
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        return texture;
+      }
+
+      /**
+       * A tall page arrives as one or more horizontal tiles (build.py splits
+       * pages taller than the GPU texture limit, with overlap). Each tile is
+       * its own texture; the screen shows whichever tile fully contains the
+       * visible window.
+       */
+      async function loadScreenshot(renderer) {
+        const tileEls = [...document.querySelectorAll("script.screen-tile")];
+        const tiles = await Promise.all(
+          SCREEN.tiles.map(async (tile, i) => {
+            const url = blobUrl(readInlineBytes(tileEls[i]), "image/jpeg");
+            const texture = await new THREE.TextureLoader().loadAsync(url);
+            configureTexture(texture, renderer, true);
+            return { ...tile, texture };
+          }),
+        );
+        return tiles;
+      }
+
+      async function loadVideo() {
+        const video = document.getElementById("source-video");
+        video.src = blobUrl(
+          readInlineBytes(document.querySelector("script.screen-video")),
+          "video/mp4",
+        );
+        video.muted = true;
+        video.loop = true;
+        video.playsInline = true;
+
+        await new Promise((resolve) => {
+          if (video.readyState >= 2) return resolve();
+          video.addEventListener("loadeddata", resolve, { once: true });
+          video.addEventListener("error", resolve, { once: true });
+        });
+
+        if (!CAPTURE) {
+          try {
+            await video.play();
+          } catch {
+            // Muted autoplay is normally allowed; if a policy blocks it
+            // anyway, start on the first interaction.
+            const resume = () => video.play().catch(() => {});
+            window.addEventListener("pointerdown", resume, { once: true });
+            window.addEventListener("keydown", resume, { once: true });
+          }
+        }
+        return video;
+      }
+
+      /** Planar UVs from the panel's own bounds; returns the panel aspect. */
+      function rebuildScreenUv(mesh, crop = { u0: 0, u1: 1, v0: 0, v1: 1 }) {
+        const geo = mesh.geometry;
+        geo.computeBoundingBox();
+        const bb = geo.boundingBox;
+        const width = Math.max(1e-6, bb.max.x - bb.min.x);
+        const height = Math.max(1e-6, bb.max.y - bb.min.y);
+        const pos = geo.attributes.position;
+        const uv = new Float32Array(pos.count * 2);
+        for (let i = 0; i < pos.count; i++) {
+          const x = (pos.getX(i) - bb.min.x) / width;
+          const y = (pos.getY(i) - bb.min.y) / height;
+          uv[i * 2] = crop.u0 + x * (crop.u1 - crop.u0);
+          uv[i * 2 + 1] = crop.v0 + y * (crop.v1 - crop.v0);
+        }
+        geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+        return width / height;
+      }
+
+      /** "cover" crop for a video: fill the panel, trim the overflow. */
+      function coverCrop(screenAspect, contentAspect) {
+        if (screenAspect > contentAspect) {
+          const v0 = (1 - contentAspect / screenAspect) / 2;
+          return { u0: 0, u1: 1, v0, v1: 1 - v0 };
+        }
+        const u0 = (1 - screenAspect / contentAspect) / 2;
+        return { u0, u1: 1 - u0, v0: 0, v1: 1 };
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* MacBook                                                            */
+      /* ------------------------------------------------------------------ */
+
+      const LID_PATTERNS = [
+        /^apple-logo(?:\.\d+)?$/,
+        /^apple-logo-leaf(?:\.\d+)?$/,
+        /^camera(?:\.\d+)?$/,
+        /^display(?:\.\d+)?$/,
+        /^display-notch(?:\.\d+)?$/,
+        /^lid(?:\.\d+)?$/,
+        /^lid-glass(?:\.\d+)?$/,
+      ];
+      const isLidPart = (name) => LID_PATTERNS.some((re) => re.test(name));
+
+      function loadMacBook() {
+        const bytes = readInlineBytes(document.getElementById("macbook-glb-data"));
+        return new Promise((resolve, reject) =>
+          new GLTFLoader().parse(bytes.buffer, "", resolve, reject),
+        );
+      }
+
+      function buildMacBook(gltf) {
+        const root = gltf.scene;
+
+        root.traverse((object) => {
+          if (!object.isMesh) return;
+          const materials = [].concat(object.material);
+          for (const material of materials) {
+            if (!material) continue;
+            material.envMapIntensity = 1.45;
+            if (material.map) material.map.anisotropy = 16;
+            if (material.name === "macbook-space-black") {
+              material.metalness = 0.88;
+              material.roughness = 0.5;
+            }
+          }
+        });
+
+        // The model ships with its lid at ~89°. Group the lid parts on a hinge
+        // and pull them back for a more natural open angle. attach() keeps
+        // each part's world transform; add() would snap it to the hinge.
+        root.updateMatrixWorld(true);
+        const hinge = new THREE.Group();
+        hinge.name = "lid-hinge";
+        hinge.position.set(0, 0.01485, -0.1054);
+        root.add(hinge);
+        root.updateMatrixWorld(true);
+        const lidParts = [];
+        root.traverse((o) => {
+          if (o.isMesh && isLidPart(o.name)) lidParts.push(o);
+        });
+        for (const part of lidParts) hinge.attach(part);
+        hinge.rotation.x = THREE.MathUtils.degToRad(-11);
+
+        // Normalise: 1 unit wide, feet on y = 0, centred on X/Z.
+        const modelGroup = new THREE.Group();
+        modelGroup.add(root);
+        modelGroup.updateMatrixWorld(true);
+        let bounds = new THREE.Box3().setFromObject(modelGroup);
+        let size = bounds.getSize(new THREE.Vector3());
+        modelGroup.scale.setScalar(1 / size.x);
+        modelGroup.updateMatrixWorld(true);
+        bounds = new THREE.Box3().setFromObject(modelGroup);
+        const center = bounds.getCenter(new THREE.Vector3());
+        modelGroup.position.x -= center.x;
+        modelGroup.position.z -= center.z;
+        modelGroup.position.y -= bounds.min.y;
+        modelGroup.updateMatrixWorld(true);
+        size = new THREE.Box3().setFromObject(modelGroup).getSize(new THREE.Vector3());
+
+        let display = null;
+        root.traverse((o) => {
+          if (o.isMesh && /^display(?:\.\d+)?$/.test(o.name)) display = o;
+        });
+        if (!display) throw new Error("No mesh named 'display' in the model");
+
+        return { modelGroup, size, display };
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Main                                                               */
+      /* ------------------------------------------------------------------ */
+
+      async function init() {
+        const canvas = document.getElementById("stage");
+        const renderer = new THREE.WebGLRenderer({
+          canvas,
+          antialias: true,
+          preserveDrawingBuffer: CAPTURE,
+          powerPreference: "high-performance",
+        });
+        const pixelRatio = CAPTURE
+          ? parseFloat(params.get("dpr") ?? "1")
+          : Math.min(window.devicePixelRatio || 1, 2);
+        renderer.setPixelRatio(pixelRatio);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.setClearColor(0x000000, 1);
+        renderer.autoClear = false;
+
+        // ---------------- Screen content and palette --------------------
+        setLoaderText("Loading screen content");
+        let tiles = null;
+        let video = null;
+        let sample = null;
+        try {
+          if (SCREEN.kind === "screenshot") {
+            tiles = await loadScreenshot(renderer);
+            sample = samplePalette(
+              tiles.map((t) => ({
+                image: t.texture.image,
+                width: t.texture.image.width,
+                height: t.texture.image.height,
+              })),
+            );
+          } else {
+            video = await loadVideo();
+            sample = samplePalette([
+              { image: video, width: video.videoWidth || 16, height: video.videoHeight || 9 },
+            ]);
+          }
+        } catch (error) {
+          console.warn("Palette sampling failed; using defaults", error);
+        }
+        const palette = derivePalette(sample);
+        window.showcasePalette = palette; // handy when tuning by hand
+
+        setLoaderText("Building scene");
+        const backdrop = createBackdrop(palette);
+        const scene = new THREE.Scene();
+        scene.environment = createStudioEnvironment(renderer, palette.accent);
+        const camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.05, 60);
+
+        const turnGroup = new THREE.Group();
+        scene.add(turnGroup);
+        const { modelGroup, size, display } = buildMacBook(await loadMacBook());
+        turnGroup.add(modelGroup);
+
+        // ---------------- Put the content on the display ----------------
+        const screenMaterial = new THREE.MeshBasicMaterial({
+          toneMapped: false,
+          side: THREE.DoubleSide,
+        });
+        display.material = screenMaterial;
+
+        let scrollRange = 0; // page pixels from top-of-window to bottom-of-window
+        let windowPx = 0; // page pixels visible on screen at once
+        let scrollTime = 0;
+        let videoTexture = null;
+
+        if (tiles) {
+          const screenAspect = rebuildScreenUv(display);
+          windowPx = SCREEN.width / screenAspect;
+          scrollRange = Math.max(0, SCREEN.height - windowPx);
+          const cruise = SCROLL_SPEED * (SCREEN.width / 1300);
+          scrollTime = scrollRange > 0 ? scrollRange / cruise + SCROLL_EASE : 0;
+          for (const tile of tiles) renderer.initTexture(tile.texture);
+          screenMaterial.map = tiles[0].texture;
+        } else if (video) {
+          const contentAspect = (video.videoWidth || 16) / (video.videoHeight || 9);
+          const screenAspect = rebuildScreenUv(display, { u0: 0, u1: 1, v0: 0, v1: 1 });
+          rebuildScreenUv(display, coverCrop(screenAspect, contentAspect));
+          videoTexture = configureTexture(new THREE.VideoTexture(video), renderer, false);
+          screenMaterial.map = videoTexture;
+        }
+
+        const contentEnd = tiles
+          ? SCROLL_DELAY + scrollTime
+          : Math.max(INTRO_DELAY + INTRO_DURATION + 4, Math.min(60, video?.duration || 0));
+        const dollyEnd = tiles ? contentEnd : INTRO_DELAY + INTRO_DURATION + VIDEO_DRIFT;
+
+        // ---------------- Lights ----------------------------------------
+        scene.add(new THREE.HemisphereLight(0xdfe7f2, 0x08090b, 0.65));
+
+        const key = new THREE.DirectionalLight(0xffffff, 4.0);
+        key.position.set(-2.4, 3.4, 3.0);
+        scene.add(key);
+
+        // The rim picks up the accent so the laptop edge belongs to the set.
+        const rimColor = new THREE.Color().setRGB(
+          ...palette.accent.map((c) => 0.55 + 0.45 * c),
+          THREE.SRGBColorSpace,
+        );
+        const rim = new THREE.DirectionalLight(rimColor, 3.2);
+        rim.position.set(2.6, 2.4, -3.4);
+        scene.add(rim);
+
+        const fill = new THREE.DirectionalLight(0xf2f6ff, 2.0);
+        fill.position.set(2.8, 1.2, 3.0);
+        scene.add(fill);
+
+        // Faint spill from the display onto the keyboard deck.
+        RectAreaLightUniformsLib.init();
+        const screenGlow = new THREE.RectAreaLight(0xb6cee2, 1.4, 0.52, 0.3);
+        screenGlow.position.set(0, 0.27, -0.22);
+        screenGlow.lookAt(0, 0.02, 0.38);
+        turnGroup.add(screenGlow);
+
+        // ---------------- Camera framing --------------------------------
+        const target = new THREE.Vector3(0, size.y * 0.4, 0);
+        const elevation = THREE.MathUtils.degToRad(8);
+        const viewDirection = new THREE.Vector3(0, Math.sin(elevation), Math.cos(elevation)).normalize();
+        const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+
+        let startDistance = 3.4;
+        let endDistance = 1.5;
+
+        // Distance at which the device fills `fillH` of the frame height and
+        // `fillW` of its width, whichever is farther. The base sits closer to
+        // the camera than the screen, so keep the fills below ~0.7.
+        function fitDistance(fillH, fillW, aspect) {
+          return Math.max(
+            size.y / (fillH * 2 * tanHalf),
+            size.x / (fillW * 2 * tanHalf * aspect),
+          );
+        }
+
+        function resize() {
+          const width = window.innerWidth;
+          const height = window.innerHeight;
+          renderer.setSize(width, height);
+          const aspect = width / height;
+          camera.aspect = aspect;
+          camera.updateProjectionMatrix();
+          backdrop.material.uniforms.uAspect.value = aspect;
+          const a = Math.max(0.35, aspect);
+          startDistance = fitDistance(0.34, 0.3, a);
+          endDistance = fitDistance(0.64, 0.7, a);
+        }
+        window.addEventListener("resize", resize, { passive: true });
+        resize();
+
+        // ---------------- One frame, as a pure function of time ---------
+        let activeTile = null;
+
+        function placeScroll(t) {
+          if (!tiles) return;
+          // Trapezoid velocity: ease in, cruise at a constant speed, ease out.
+          // Constant cruise speed is what makes a long scroll read as smooth.
+          let progress = 0;
+          if (scrollTime > 0) {
+            const T = scrollTime;
+            const a = Math.min(SCROLL_EASE, T / 2);
+            const v = 1 / (T - a);
+            const u = Math.min(T, Math.max(0, t - SCROLL_DELAY));
+            progress =
+              u < a ? (v * u * u) / (2 * a)
+              : u < T - a ? (v * a) / 2 + v * (u - a)
+              : 1 - (v * (T - u) * (T - u)) / (2 * a);
+          }
+          const top = progress * scrollRange;
+          const tile =
+            tiles.find((x) => top >= x.top && top + windowPx <= x.top + x.height) ??
+            tiles[tiles.length - 1];
+          if (tile !== activeTile) {
+            screenMaterial.map = tile.texture;
+            screenMaterial.needsUpdate = true;
+            activeTile = tile;
+          }
+          const tex = tile.texture;
+          const visible = Math.min(1, windowPx / tile.height);
+          tex.repeat.set(1, visible);
+          tex.offset.set(0, Math.max(0, 1 - (top - tile.top + windowPx) / tile.height));
+        }
+
+        function draw(t) {
+          const intro = smoothstep((t - INTRO_DELAY) / INTRO_DURATION);
+          const dolly = smoothstep((t - INTRO_DELAY - INTRO_DURATION) / Math.max(1, dollyEnd - INTRO_DELAY - INTRO_DURATION));
+          const distance =
+            lerp(startDistance, endDistance, intro) +
+            (endDistance * DOLLY_CLOSER - endDistance) * dolly;
+          const sway = Math.sin(t * 0.22) * 0.05 * smoothstep((t - 1) / 3);
+
+          camera.position.copy(target).addScaledVector(viewDirection, distance);
+          camera.position.x += Math.sin(sway) * distance * 0.5;
+          camera.lookAt(target);
+
+          const uniforms = backdrop.material.uniforms;
+          uniforms.uProgress.value = smoothstep((t - 0.2) / INTRO_DURATION);
+          uniforms.uTime.value = t;
+
+          placeScroll(t);
+
+          // Hover, ramped in as the camera settles.
+          const float = smoothstep((t - 1.0) / 4.0);
+          turnGroup.position.set(
+            Math.sin(t * 0.27) * 0.004 * float,
+            (Math.sin(t * 0.9) * 0.009 + Math.sin(t * 0.37 + 1.2) * 0.0022) * float,
+            0,
+          );
+          turnGroup.rotation.set(
+            Math.sin(t * 0.23 + 1.8) * 0.0035 * float,
+            Math.sin(t * 0.33) * 0.012 * float,
+            Math.sin(t * 0.29 + 0.6) * 0.005 * float,
+          );
+
+          renderer.clear();
+          renderer.render(backdrop.scene, backdrop.camera);
+          renderer.clearDepth();
+          renderer.render(scene, camera);
+        }
+
+        /** Seeks a video to `t` (looping) and resolves once the frame is ready. */
+        function seekVideo(t) {
+          if (!video || !video.duration) return Promise.resolve();
+          const time = t % video.duration;
+          if (Math.abs(video.currentTime - time) < 1e-3) return Promise.resolve();
+          return new Promise((resolve) => {
+            video.addEventListener("seeked", resolve, { once: true });
+            video.currentTime = time;
+          });
+        }
+
+        async function renderAt(t) {
+          await seekVideo(t);
+          if (videoTexture) videoTexture.needsUpdate = true;
+          draw(t);
+        }
+
+        // Public hook for stills and video export (see tools/render-video.mjs).
+        window.showcase = {
+          duration: contentEnd,
+          palette,
+          renderAt,
+        };
+
+        if (CAPTURE) {
+          await renderAt(FROZEN_T ?? 0);
+          document.body.classList.add("ready");
+          window.showcase.ready = true;
+          return;
+        }
+
+        // Interactive: wall-clock loop. The screenshot holds at the bottom;
+        // the video keeps looping; the laptop keeps floating.
+        const startedAt = performance.now();
+        let first = true;
+        function frame(now) {
+          draw((now - startedAt) / 1000);
+          if (first) {
+            first = false;
+            document.body.classList.add("ready");
+            loaderEl.classList.add("hidden");
+            window.showcase.ready = true;
+          }
+          requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      }
+
+      init().catch(showError);
+    </script>
+  </body>
+</html>

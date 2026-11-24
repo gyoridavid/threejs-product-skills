@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>__TITLE__</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #ffffff;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .backdrop {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background: #ffffff;
+      }
+
+      #stage {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        opacity: 0;
+        transition: opacity 1s ease;
+      }
+
+      body.ready #stage,
+      body.capture #stage {
+        opacity: 1;
+        transition: none;
+      }
+
+      body.capture #loader {
+        display: none;
+      }
+
+      #loader {
+        position: fixed;
+        left: 50%;
+        bottom: 30px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        z-index: 10;
+        font: 500 10px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(34, 30, 26, 0.48);
+        transition: opacity 0.6s ease;
+        white-space: nowrap;
+      }
+
+      #loader.hidden {
+        opacity: 0;
+      }
+
+      #loader.error {
+        color: #9d4334;
+      }
+
+      .spinner {
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(78, 62, 44, 0.16);
+        border-top-color: rgba(78, 62, 44, 0.7);
+        animation: spin 0.9s linear infinite;
+      }
+
+      #loader.error .spinner {
+        animation: none;
+        border-color: rgba(157, 67, 52, 0.25);
+        border-top-color: #9d4334;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(1turn);
+        }
+      }
+
+      @media (max-width: 640px) {
+        #loader {
+          bottom: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+
+    <canvas
+      id="stage"
+      role="img"
+      aria-label="__ARIA_LABEL__"
+    ></canvas>
+
+    <div id="loader" role="status" aria-live="polite">
+      <span class="spinner"></span>
+      <span id="loader-text">Preparing scene</span>
+    </div>
+
+    <script>
+      // If the CDN modules cannot load (e.g. offline), fail with a helpful
+      // message instead of leaving the loading label up forever.
+      window.__showcaseBooted = false;
+      window.setTimeout(function () {
+        if (window.__showcaseBooted) return;
+        var loader = document.getElementById("loader");
+        if (!loader || document.body.classList.contains("ready")) return;
+        loader.classList.add("error");
+        document.getElementById("loader-text").textContent =
+          "Three.js could not load — internet access is required";
+      }, 12000);
+    </script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <!-- build.py inlines the settings and the model. -->
+    <script id="showcase-config" type="application/json">__CONFIG_JSON__</script>
+    <script id="model-glb-data" type="text/plain">__MODEL_GLB_BASE64__</script>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
+      import { Reflector } from "three/addons/objects/Reflector.js";
+
+      window.__showcaseBooted = true;
+
+      const loaderEl = document.getElementById("loader");
+      const loaderTextEl = document.getElementById("loader-text");
+
+      function hideLoader() {
+        loaderEl.classList.add("hidden");
+      }
+
+      function showError(error) {
+        console.error(error);
+        loaderEl.classList.add("error");
+        loaderTextEl.textContent =
+          "Could not build the scene — check the console";
+      }
+
+      const CONFIG = JSON.parse(
+        document.getElementById("showcase-config").textContent,
+      );
+
+      // `?t=12.5` renders one still at 12.5 s; `?capture` waits for
+      // `window.showcase.renderAt(t)` calls (video export). Neither runs a
+      // wall-clock loop.
+      const params = new URLSearchParams(location.search);
+      const FROZEN_T = params.has("t") ? parseFloat(params.get("t")) : null;
+      const CAPTURE = params.has("capture") || FROZEN_T !== null;
+      if (CAPTURE) document.body.classList.add("capture");
+
+      function loadModel() {
+        const el = document.getElementById("model-glb-data");
+        const binary = atob(el.textContent.replace(/\s+/g, ""));
+        el.textContent = "";
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new Promise((resolve, reject) =>
+          new GLTFLoader().parse(bytes.buffer, "", resolve, reject),
+        );
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Studio environment                                                 */
+      /* ------------------------------------------------------------------ */
+
+      function createStudioEnvironment(renderer) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2048;
+        canvas.height = 1024;
+        const ctx = canvas.getContext("2d");
+
+        // A dark studio surround with bright softboxes. The dark surround lets
+        // the glaze show narrow, sweeping highlights instead of a flat sheen.
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, "#8a8378");
+        sky.addColorStop(0.2, "#4b463e");
+        sky.addColorStop(0.4, "#24211c");
+        sky.addColorStop(0.55, "#12100d");
+        sky.addColorStop(0.75, "#080706");
+        sky.addColorStop(1, "#040303");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const softbox = (cx, cy, rx, ry, alpha, tint = "255, 255, 255") => {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(rx, ry);
+          const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+          gradient.addColorStop(0, `rgba(${tint}, ${alpha})`);
+          gradient.addColorStop(0.45, `rgba(${tint}, ${alpha * 0.76})`);
+          gradient.addColorStop(0.78, `rgba(${tint}, ${alpha * 0.24})`);
+          gradient.addColorStop(1, `rgba(${tint}, 0)`);
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(0, 0, 1, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        };
+
+        // Key softbox, overhead fill, cool fill panel, warm floor bounce.
+        softbox(430, 340, 330, 190, 1.0, "255, 247, 232");
+        softbox(1040, 130, 620, 140, 0.85, "255, 255, 255");
+        softbox(1670, 420, 180, 190, 0.8, "220, 234, 255");
+        softbox(1024, 760, 620, 100, 0.16, "255, 214, 166");
+
+        // Broad vertical softboxes keep the glaze lively without producing
+        // the thin, scratch-like line reflections that narrow strips cause.
+        softbox(310, 360, 110, 260, 0.3, "255, 250, 240");
+        softbox(1520, 380, 100, 250, 0.24, "255, 236, 210");
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        const envMap = pmrem.fromEquirectangular(texture).texture;
+
+        texture.dispose();
+        pmrem.dispose();
+
+        return envMap;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Helpers                                                            */
+      /* ------------------------------------------------------------------ */
+
+      function makeRadialTexture(size, stops) {
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        const g = ctx.createRadialGradient(
+          size / 2,
+          size / 2,
+          0,
+          size / 2,
+          size / 2,
+          size / 2,
+        );
+        for (const [offset, color] of stops) g.addColorStop(offset, color);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, size, size);
+        return new THREE.CanvasTexture(canvas);
+      }
+
+      /**
+       * Finds the vertical spin axis of the product and returns the offset that
+       * puts that axis at X = Z = 0 and the lowest point at Y = 0.
+       *
+       * The bounding-box centre is often wrong: a handle, spout, strap or
+       * cable pushes it sideways and the product orbits instead of spinning.
+       *  - "base": centroid of the lowest 2% of vertices (default; the
+       *            footprint of most products sits under their body).
+       *  - "top":  centroid of the highest 2% (vessels whose base is uneven:
+       *            the rim of a cup or bottle neck).
+       *  - "bbox": bounding-box centre (symmetric products).
+       */
+      function findSpinAxis(root, mode) {
+        root.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(root, true);
+        const height = bounds.max.y - bounds.min.y;
+        const offset = new THREE.Vector3(
+          -(bounds.min.x + bounds.max.x) / 2,
+          -bounds.min.y,
+          -(bounds.min.z + bounds.max.z) / 2,
+        );
+        if (mode === "bbox") return { offset, height };
+
+        const band = height * 0.02;
+        const v = new THREE.Vector3();
+        let sumX = 0, sumZ = 0, count = 0;
+        root.traverse((object) => {
+          if (!object.isMesh) return;
+          const position = object.geometry.attributes.position;
+          for (let i = 0; i < position.count; i++) {
+            v.fromBufferAttribute(position, i).applyMatrix4(object.matrixWorld);
+            const inBand = mode === "top"
+              ? v.y >= bounds.max.y - band
+              : v.y <= bounds.min.y + band;
+            if (!inBand) continue;
+            sumX += v.x;
+            sumZ += v.z;
+            count++;
+          }
+        });
+        if (count) {
+          offset.x = -sumX / count;
+          offset.z = -sumZ / count;
+        }
+        return { offset, height };
+      }
+
+      /**
+       * Optional glossy finish: turns each material into a clear-coated
+       * physical material, keeping its textures. Good for ceramics, plastics
+       * and lacquered products; leave it off for fabric, wood or metal.
+       */
+      function applyGlossyFinish(material) {
+        const glossy = new THREE.MeshPhysicalMaterial({
+          map: material.map ?? null,
+          normalMap: material.normalMap ?? null,
+          color: material.color ?? new THREE.Color(0xffffff),
+          metalness: 0,
+          roughness: 0.24,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.12,
+          envMapIntensity: 1.7,
+          side: material.side,
+        });
+        glossy.name = `${material.name || "material"}-glossy`;
+        return glossy;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Main                                                               */
+      /* ------------------------------------------------------------------ */
+
+      async function init() {
+        const canvas = document.getElementById("stage");
+        const renderer = new THREE.WebGLRenderer({
+          canvas,
+          antialias: true,
+          alpha: true,
+          preserveDrawingBuffer: CAPTURE,
+          powerPreference: "high-performance",
+        });
+
+        renderer.setPixelRatio(
+          CAPTURE
+            ? parseFloat(params.get("dpr") ?? "1")
+            : Math.min(window.devicePixelRatio || 1, 2),
+        );
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.02;
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.VSMShadowMap;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+        const camera = new THREE.PerspectiveCamera(
+          30,
+          window.innerWidth / window.innerHeight,
+          0.05,
+          60,
+        );
+
+        scene.environment = createStudioEnvironment(renderer);
+
+        // ---------------- Product ---------------------------------------
+        loaderTextEl.textContent = "Loading model";
+        const gltf = await loadModel();
+        const root = gltf.scene;
+        if (!root.getObjectByProperty("isMesh", true)) {
+          throw new Error("The model contains no mesh.");
+        }
+
+        const anisotropy = Math.min(16, renderer.capabilities.getMaxAnisotropy());
+        root.traverse((object) => {
+          if (!object.isMesh) return;
+          object.castShadow = true;
+          object.receiveShadow = true;
+          const swap = (material) => {
+            if (material.map) {
+              material.map.colorSpace = THREE.SRGBColorSpace;
+              material.map.anisotropy = anisotropy;
+            }
+            return CONFIG.finish === "glossy" ? applyGlossyFinish(material) : material;
+          };
+          object.material = Array.isArray(object.material)
+            ? object.material.map(swap)
+            : swap(object.material);
+        });
+
+        const { offset, height } = findSpinAxis(root, CONFIG.pivot ?? "base");
+        const centred = new THREE.Group();
+        centred.add(root);
+        centred.position.copy(offset);
+
+        const product = new THREE.Group();
+        product.scale.setScalar(1 / height); // product height becomes 1 unit
+        product.add(centred);
+
+        const turntable = new THREE.Group();
+        turntable.add(product);
+        scene.add(turntable);
+
+        // Fit the camera to the widest the product gets over a full turn.
+        turntable.updateMatrixWorld(true);
+        const productBox = new THREE.Box3().setFromObject(turntable, true);
+        const productSize = productBox.getSize(new THREE.Vector3());
+        const productHeight = productSize.y;
+        const turnRadius = Math.max(
+          Math.hypot(productBox.min.x, productBox.min.z),
+          Math.hypot(productBox.max.x, productBox.min.z),
+          Math.hypot(productBox.min.x, productBox.max.z),
+          Math.hypot(productBox.max.x, productBox.max.z),
+        );
+
+        // ---------------- Reflective white floor -------------------------
+        loaderTextEl.textContent = "Lighting";
+
+        const floorShader = {
+          name: "WhiteFloorReflector",
+          uniforms: {
+            color: { value: null },
+            tDiffuse: { value: null },
+            textureMatrix: { value: null },
+            uStrength: { value: 0.78 },
+            uFadeStart: { value: 0.04 },
+            uFadeEnd: { value: 2.2 },
+          },
+          vertexShader: /* glsl */ `
+            uniform mat4 textureMatrix;
+            varying vec4 vUv;
+            varying vec3 vWorldPosition;
+
+            #include <common>
+            #include <logdepthbuf_pars_vertex>
+
+            void main() {
+              vUv = textureMatrix * vec4(position, 1.0);
+              vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              #include <logdepthbuf_vertex>
+            }
+          `,
+          fragmentShader: /* glsl */ `
+            uniform vec3 color;
+            uniform sampler2D tDiffuse;
+            uniform float uStrength;
+            uniform float uFadeStart;
+            uniform float uFadeEnd;
+            varying vec4 vUv;
+            varying vec3 vWorldPosition;
+
+            #include <logdepthbuf_pars_fragment>
+
+            void main() {
+              #include <logdepthbuf_fragment>
+
+              vec4 base = texture2DProj(tDiffuse, vUv);
+              float fade = 1.0 - smoothstep(
+                uFadeStart,
+                uFadeEnd,
+                length(vWorldPosition.xz)
+              );
+              vec3 reflected = mix(color, base.rgb, uStrength * fade);
+              gl_FragColor = vec4(reflected, 1.0);
+
+              #include <colorspace_fragment>
+            }
+          `,
+        };
+
+        const floor = new Reflector(new THREE.PlaneGeometry(60, 60), {
+          clipBias: 0.003,
+          textureWidth: 1024,
+          textureHeight: 1024,
+          color: 0xffffff,
+          shader: floorShader,
+        });
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = 0;
+        scene.add(floor);
+
+        const contactTexture = makeRadialTexture(512, [
+          [0, "rgba(30, 27, 23, 0.55)"],
+          [0.38, "rgba(30, 27, 23, 0.3)"],
+          [0.72, "rgba(30, 27, 23, 0.06)"],
+          [1, "rgba(30, 27, 23, 0)"],
+        ]);
+        const contact = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.75, 1.75),
+          new THREE.MeshBasicMaterial({
+            map: contactTexture,
+            transparent: true,
+            depthWrite: false,
+            opacity: 0.55,
+            toneMapped: false,
+          }),
+        );
+        contact.rotation.x = -Math.PI / 2;
+        contact.position.y = 0.002;
+        contact.renderOrder = 2;
+        scene.add(contact);
+
+        // ---------------- Key + soft fill --------------------------------
+        RectAreaLightUniformsLib.init();
+
+        const key = new THREE.DirectionalLight(0xfff7ee, 3.4);
+        key.position.set(-2.2, 4.2, 3.0);
+        key.castShadow = true;
+        key.shadow.mapSize.set(1024, 1024);
+        key.shadow.camera.near = 0.5;
+        key.shadow.camera.far = 12;
+        key.shadow.camera.left = -1.8;
+        key.shadow.camera.right = 1.8;
+        key.shadow.camera.top = 1.8;
+        key.shadow.camera.bottom = -1.8;
+        key.shadow.radius = 16;
+        key.shadow.blurSamples = 20;
+        key.shadow.bias = -0.0004;
+        key.shadow.normalBias = 0.02;
+        key.target.position.set(0, 0.45, 0);
+        scene.add(key, key.target);
+
+        const fill = new THREE.RectAreaLight(0xdce9ff, 1.7, 2.4, 1.8);
+        fill.position.set(2.8, 1.8, 2.2);
+        fill.lookAt(0, 0.5, 0);
+        scene.add(fill);
+
+        // ---------------- Camera fit ------------------------------------
+        const target = new THREE.Vector3(0, productHeight * 0.5, 0);
+        const elevation = THREE.MathUtils.degToRad(13.5);
+        const viewDirection = new THREE.Vector3(
+          0,
+          Math.sin(elevation),
+          Math.cos(elevation),
+        ).normalize();
+        const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+
+        // Widest silhouette over a full revolution.
+        const widestWidth = Math.max(productSize.x, turnRadius * 2 * 0.85);
+
+        function fitDistance() {
+          const tanHalf = Math.tan(verticalFov / 2);
+          const aspect = Math.max(0.35, window.innerWidth / window.innerHeight);
+          const distForHeight = productHeight / (0.54 * 2 * tanHalf);
+          const distForWidth = widestWidth / (0.8 * 2 * tanHalf * aspect);
+          return Math.max(distForHeight, distForWidth);
+        }
+
+        let baseDistance = fitDistance();
+
+        function resize() {
+          const width = window.innerWidth;
+          const height = window.innerHeight;
+          renderer.setSize(width, height);
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          baseDistance = fitDistance();
+        }
+        window.addEventListener("resize", resize, { passive: true });
+        resize();
+
+        // ---------------- Animation -------------------------------------
+        // One continuous revolution; the studio environment turns much more
+        // slowly, so highlights glide across the surface.
+        const REVOLUTION_SECONDS = CONFIG.revolutionSeconds ?? 32;
+        const ENVIRONMENT_SPEED = 0.055; // radians / second
+
+        function draw(t) {
+          turntable.rotation.y = t * ((Math.PI * 2) / REVOLUTION_SECONDS);
+          scene.environmentRotation.y = -0.35 + t * ENVIRONMENT_SPEED;
+          camera.position.copy(target).addScaledVector(viewDirection, baseDistance);
+          camera.lookAt(target);
+          renderer.render(scene, camera);
+        }
+
+        // Public hook for stills and video export (see tools/render-video.mjs).
+        // One revolution loops seamlessly.
+        window.showcase = {
+          duration: REVOLUTION_SECONDS,
+          renderAt: async (t) => draw(t),
+        };
+
+        if (CAPTURE) {
+          draw(FROZEN_T ?? 0);
+          document.body.classList.add("ready");
+          window.showcase.ready = true;
+          return;
+        }
+
+        const startedAt = performance.now();
+        let firstFrame = true;
+        function frame(now) {
+          draw((now - startedAt) / 1000);
+          if (firstFrame) {
+            firstFrame = false;
+            document.body.classList.add("ready");
+            hideLoader();
+            window.showcase.ready = true;
+          }
+          requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      }
+
+      init().catch(showError);
+    </script>
+  </body>
+</html>

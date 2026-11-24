@@ -1,0 +1,9 @@
+{
+  "name": "threejs-product-showcases",
+  "description": "Three.js showcase pages and videos: a floating MacBook mockup that scrolls a website or plays a video, with a backdrop colour-matched to the content, and a white-studio product turntable with a real floor reflection.",
+  "version": "1.0.0",
+  "author": {
+    "name": "AI Agents A-Z"
+  },
+  "license": "MIT"
+}

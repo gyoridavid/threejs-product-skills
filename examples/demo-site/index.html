@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fernway — plan trips together</title>
+    <!-- A fictional product, made for the skill's previews. Not a real brand. -->
+    <style>
+      :root {
+        --bg: #f6f4ee;
+        --ink: #17201b;
+        --muted: #5f6b63;
+        --accent: #1f8a5b;
+        --accent-soft: #d8eee2;
+        --card: #ffffff;
+        --line: #e3e0d6;
+      }
+      /* Open as index.html#dark for the night theme. */
+      .dark {
+        --bg: #0f0d14;
+        --ink: #f3f0f7;
+        --muted: #9b95a8;
+        --accent: #ff7a45;
+        --accent-soft: #3a2219;
+        --card: #18151f;
+        --line: #2a2533;
+      }
+      .dark .btn { background: var(--ink); color: var(--bg); }
+      .dark .btn.green { background: var(--accent); color: #fff; }
+      .dark .btn.ghost { background: transparent; color: var(--ink); }
+      .dark .item { background: #201c29; }
+      .dark .map { background:
+          radial-gradient(circle at 30% 60%, #ff7a45 0 7px, transparent 8px),
+          radial-gradient(circle at 72% 35%, #8f7cff 0 7px, transparent 8px),
+          repeating-linear-gradient(35deg, #1d1a25 0 18px, #221e2b 18px 36px); }
+      .dark .price.featured { background: var(--accent); border-color: var(--accent); }
+      .dark .price.featured p, .dark .price.featured li { color: #ffe3d6; }
+      .dark .cta p { color: #ffe3d6; }
+      .dark .cta .btn { background: #fff; color: #17131d; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font: 17px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .wrap { width: min(1180px, 100% - 64px); margin: 0 auto; }
+      nav { display: flex; align-items: center; justify-content: space-between; padding: 26px 0; }
+      .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; }
+      .logo i { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); display: block;
+        box-shadow: inset -7px -7px 0 rgba(255,255,255,.25); }
+      nav ul { display: flex; gap: 34px; list-style: none; margin: 0; padding: 0; color: var(--muted); font-size: 15px; }
+      .btn { display: inline-block; padding: 12px 20px; border-radius: 999px; background: var(--ink); color: #fff;
+        font-weight: 600; font-size: 15px; text-decoration: none; }
+      .btn.green { background: var(--accent); }
+      .btn.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line); }
+      header { padding: 90px 0 70px; display: grid; grid-template-columns: 1.05fr 1fr; gap: 60px; align-items: center; }
+      .eyebrow { display: inline-block; padding: 6px 12px; border-radius: 999px; background: var(--accent-soft);
+        color: var(--accent); font-weight: 600; font-size: 13px; letter-spacing: .02em; }
+      h1 { font-size: 66px; line-height: 1.02; letter-spacing: -.035em; margin: 22px 0 20px; }
+      h1 em { font-style: normal; color: var(--accent); }
+      h2 { font-size: 46px; line-height: 1.08; letter-spacing: -.03em; margin: 0 0 16px; }
+      p.lead { font-size: 20px; color: var(--muted); max-width: 520px; margin: 0 0 32px; }
+      .actions { display: flex; gap: 12px; }
+      .phone-card { background: var(--card); border-radius: 28px; padding: 26px; border: 1px solid var(--line);
+        box-shadow: 0 30px 60px -30px rgba(23,32,27,.25); }
+      .trip { display: grid; grid-template-columns: 54px 1fr auto; gap: 14px; align-items: center;
+        padding: 14px 0; border-bottom: 1px solid var(--line); }
+      .trip:last-child { border-bottom: 0; }
+      .dot { width: 54px; height: 54px; border-radius: 16px; }
+      .trip b { display: block; } .trip span { color: var(--muted); font-size: 14px; }
+      .pill { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+      .map { height: 170px; border-radius: 18px; margin-bottom: 14px;
+        background:
+          radial-gradient(circle at 30% 60%, #1f8a5b 0 7px, transparent 8px),
+          radial-gradient(circle at 72% 35%, #e0773a 0 7px, transparent 8px),
+          repeating-linear-gradient(35deg, #e9efe6 0 18px, #e1e9dd 18px 36px); }
+      section { padding: 110px 0; }
+      .logos { display: flex; justify-content: space-between; color: #a5a99f; font-weight: 700; font-size: 22px;
+        letter-spacing: -.02em; padding: 30px 0 10px; border-top: 1px solid var(--line); }
+      .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 50px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 30px; }
+      .card .icon { width: 44px; height: 44px; border-radius: 12px; background: var(--accent-soft); margin-bottom: 22px;
+        display: grid; place-items: center; color: var(--accent); font-weight: 800; }
+      .card h3 { margin: 0 0 8px; font-size: 21px; }
+      .card p { margin: 0; color: var(--muted); }
+      .split { display: grid; grid-template-columns: 1fr 1fr; gap: 70px; align-items: center; }
+      .board { background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 22px;
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .col { background: var(--bg); border-radius: 16px; padding: 12px; min-height: 260px; }
+      .col h4 { margin: 2px 4px 12px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+      .item { background: #fff; border-radius: 12px; padding: 12px; margin-bottom: 10px; font-size: 14px;
+        border: 1px solid var(--line); }
+      .item small { display: block; color: var(--muted); }
+      .votes { display: flex; gap: 4px; margin-top: 8px; }
+      .votes i { width: 18px; height: 18px; border-radius: 50%; display: block; border: 2px solid #fff; margin-left: -6px; }
+      .votes i:first-child { margin-left: 0; }
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; text-align: left; }
+      .stats b { display: block; font-size: 54px; letter-spacing: -.03em; color: var(--accent); }
+      .stats span { color: var(--muted); }
+      blockquote { margin: 0; font-size: 34px; line-height: 1.25; letter-spacing: -.02em; max-width: 900px; }
+      .who { margin-top: 26px; color: var(--muted); }
+      .pricing { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 50px; }
+      .price { background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 34px; }
+      .price.featured { background: var(--ink); color: #fff; border-color: var(--ink); }
+      .price.featured p, .price.featured li { color: #c9d1cb; }
+      .price b { font-size: 48px; letter-spacing: -.03em; display: block; margin: 14px 0 4px; }
+      .price ul { padding: 0; list-style: none; margin: 24px 0 28px; color: var(--muted); }
+      .price li { padding: 7px 0; border-bottom: 1px dashed var(--line); }
+      .cta { background: var(--accent); color: #fff; border-radius: 36px; padding: 90px 70px; text-align: center; }
+      .cta h2 { font-size: 58px; }
+      .cta p { color: #d4efe1; font-size: 20px; margin: 0 0 30px; }
+      .cta .btn { background: #fff; color: var(--ink); }
+      footer { padding: 80px 0 60px; color: var(--muted); font-size: 15px; }
+      .fcols { display: grid; grid-template-columns: 2fr repeat(4, 1fr); gap: 30px; }
+      .fcols h5 { color: var(--ink); font-size: 14px; margin: 0 0 14px; }
+      .fcols a { display: block; color: var(--muted); text-decoration: none; padding: 4px 0; }
+      .legal { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; }
+    </style>
+  </head>
+  <body>
+    <script>
+      if (location.hash === "#dark") document.body.classList.add("dark");
+    </script>
+    <div class="wrap">
+      <nav>
+        <div class="logo"><i></i>Fernway</div>
+        <ul><li>Product</li><li>Templates</li><li>Pricing</li><li>Stories</li></ul>
+        <a class="btn" href="#">Start planning</a>
+      </nav>
+
+      <header>
+        <div>
+          <span class="eyebrow">New · Shared budgets</span>
+          <h1>Plan the trip <em>together</em>, not in the group chat.</h1>
+          <p class="lead">Fernway keeps dates, places, votes and money in one calm board everyone can edit — from the first idea to the last train home.</p>
+          <div class="actions"><a class="btn green" href="#">Create a trip — free</a><a class="btn ghost" href="#">See a sample board</a></div>
+        </div>
+        <div class="phone-card">
+          <div class="map"></div>
+          <div class="trip"><div class="dot" style="background:#cfe7d9"></div><div><b>Lisbon long weekend</b><span>6 people · 14–17 May</span></div><span class="pill">Booked</span></div>
+          <div class="trip"><div class="dot" style="background:#f4d9c6"></div><div><b>Dolomites hut-to-hut</b><span>4 people · July</span></div><span class="pill">Voting</span></div>
+          <div class="trip"><div class="dot" style="background:#dcdff3"></div><div><b>Kyoto in autumn</b><span>2 people · Nov</span></div><span class="pill">Ideas</span></div>
+        </div>
+      </header>
+
+      <div class="logos"><span>northfield</span><span>Paloma&nbsp;Co</span><span>LATITUDE</span><span>orbit/labs</span><span>Kestrel</span></div>
+
+      <section>
+        <span class="eyebrow">Why Fernway</span>
+        <h2>Everything a group trip needs.<br />Nothing it doesn't.</h2>
+        <div class="grid3">
+          <div class="card"><div class="icon">✓</div><h3>Vote on anything</h3><p>Dates, stays, restaurants. Everyone gets a say and the board shows the winner.</p></div>
+          <div class="card"><div class="icon">€</div><h3>Split costs fairly</h3><p>Log a payment once. Fernway works out who owes whom, in any currency.</p></div>
+          <div class="card"><div class="icon">↗</div><h3>One link to share</h3><p>Friends join from a link — no app to install, no account to remember.</p></div>
+          <div class="card"><div class="icon">☀</div><h3>Weather-aware days</h3><p>Plans reshuffle when the forecast turns, so the beach day lands on the sunny one.</p></div>
+          <div class="card"><div class="icon">⌁</div><h3>Works offline</h3><p>Tickets, maps and addresses stay on your phone when the signal doesn't.</p></div>
+          <div class="card"><div class="icon">♥</div><h3>Memories built in</h3><p>Photos land on the day they were taken. The trip becomes its own album.</p></div>
+        </div>
+      </section>
+
+      <section class="split">
+        <div>
+          <span class="eyebrow">The board</span>
+          <h2>From "someone should book" to booked.</h2>
+          <p class="lead">Ideas move to voting, voting moves to booked. Everyone can see what's decided and what still needs a hand.</p>
+          <a class="btn ghost" href="#">Explore the board →</a>
+        </div>
+        <div class="board">
+          <div class="col"><h4>Ideas</h4>
+            <div class="item">Sunset at Miradouro<small>added by Ana</small></div>
+            <div class="item">Day trip to Sintra<small>added by Tom</small></div>
+            <div class="item">Fado night<small>added by Lea</small></div></div>
+          <div class="col"><h4>Voting</h4>
+            <div class="item">Surf lesson, Sat AM<small>4 of 6 voted</small><div class="votes"><i style="background:#1f8a5b"></i><i style="background:#e0773a"></i><i style="background:#6c74c9"></i><i style="background:#d6b23c"></i></div></div>
+            <div class="item">Seafood at Ramiro<small>5 of 6 voted</small><div class="votes"><i style="background:#1f8a5b"></i><i style="background:#e0773a"></i><i style="background:#6c74c9"></i></div></div></div>
+          <div class="col"><h4>Booked</h4>
+            <div class="item">Flights LIS<small>€142 each</small></div>
+            <div class="item">Apartment in Alfama<small>3 nights · €96 each</small></div></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="stats">
+          <div><b>2.4M</b><span>trips planned</span></div>
+          <div><b>91%</b><span>of groups actually go</span></div>
+          <div><b>38 min</b><span>saved per decision</span></div>
+          <div><b>4.9</b><span>average rating</span></div>
+        </div>
+      </section>
+
+      <section>
+        <blockquote>"We planned a ten-person wedding weekend without a single 200-message thread. Fernway is the friend who's good at logistics."</blockquote>
+        <div class="who">— Maya R., organised 12 trips on Fernway</div>
+      </section>
+
+      <section>
+        <span class="eyebrow">Pricing</span>
+        <h2>Free for friends. Fair for teams.</h2>
+        <div class="pricing">
+          <div class="price"><h3>Free</h3><p>For small trips</p><b>€0</b><ul><li>Up to 8 travellers</li><li>Votes and the board</li><li>Cost splitting</li></ul><a class="btn ghost" href="#">Start free</a></div>
+          <div class="price featured"><h3>Plus</h3><p>For frequent planners</p><b>€4<small style="font-size:18px">/mo</small></b><ul><li>Unlimited travellers</li><li>Offline trip packs</li><li>Weather-aware days</li></ul><a class="btn green" href="#">Try Plus</a></div>
+          <div class="price"><h3>Teams</h3><p>For offsites and retreats</p><b>€12<small style="font-size:18px">/seat</small></b><ul><li>Budgets and approvals</li><li>Shared templates</li><li>Priority support</li></ul><a class="btn ghost" href="#">Talk to us</a></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="cta">
+          <h2>Where to next?</h2>
+          <p>Start a board, send one link, and let the group decide.</p>
+          <a class="btn" href="#">Create a trip — free</a>
+        </div>
+      </section>
+
+      <footer>
+        <div class="fcols">
+          <div><div class="logo" style="color:var(--ink)"><i></i>Fernway</div><p>Plan trips together.</p></div>
+          <div><h5>Product</h5><a>Board</a><a>Budgets</a><a>Offline</a><a>Templates</a></div>
+          <div><h5>Company</h5><a>About</a><a>Careers</a><a>Press</a></div>
+          <div><h5>Resources</h5><a>Guides</a><a>Help centre</a><a>Status</a></div>
+          <div><h5>Legal</h5><a>Privacy</a><a>Terms</a></div>
+        </div>
+        <div class="legal"><span>© Fernway — a fictional company for demos</span><span>Made with care</span></div>
+      </footer>
+    </div>
+  </body>
+</html>

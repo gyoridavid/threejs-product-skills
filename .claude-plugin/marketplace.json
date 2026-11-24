@@ -1,0 +1,15 @@
+{
+  "name": "threejs-product-skills",
+  "owner": {
+    "name": "AI Agents A-Z"
+  },
+  "description": "Skills for building Three.js product showcases.",
+  "plugins": [
+    {
+      "name": "threejs-product-showcases",
+      "source": "./",
+      "license": "MIT",
+      "description": "MacBook mockups with colour-matched backdrops and scrolling websites, product turntables with real reflections, and frame-exact video export."
+    }
+  ]
+}

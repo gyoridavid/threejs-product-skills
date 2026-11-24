@@ -1,0 +1,13 @@
+{
+  "name": "threejs-product-showcases-tools",
+  "private": true,
+  "type": "module",
+  "description": "Capture full-page screenshots and render showcase pages to video.",
+  "scripts": {
+    "capture": "node capture-page.mjs",
+    "render": "node render-video.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.56.0"
+  }
+}

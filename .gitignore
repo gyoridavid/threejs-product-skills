@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build and render outputs (templates are *.template.html)
+*.html
+!*.template.html
+!examples/**/*.html
+*.mp4
+*.mov
+*.webm
+stills/
+
+# Captured pages and other working images
+*.png
+!previews/*.png
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+__pycache__/

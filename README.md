@@ -7,18 +7,18 @@ An agent skill for building 3D product showcase pages, and videos of them, with 
 
 Each page is a single HTML file that opens by double-click. A small Node tool renders any of them to a smooth 60 fps MP4, frame by frame.
 
-| Dark page → orange beams | Same page, `--backdrop tunnel` | Light page → green beams |
-| --- | --- | --- |
+| Dark page → orange beams                                                  | Same page, `--backdrop tunnel`                                           | Light page → green beams                                               |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
 | ![MacBook mockup with orange light beams](previews/mockup-beams-dark.jpg) | ![MacBook mockup in an orange ribbed tunnel](previews/mockup-tunnel.jpg) | ![MacBook mockup on a pale green set](previews/mockup-beams-light.jpg) |
 
-*The page on screen is [Fernway](examples/demo-site/), a fictional site made for these previews.*
+_The page on screen is [Fernway](examples/demo-site/), a fictional site made for these previews._
 
 ## Install
 
 ### As a Claude Code plugin
 
 ```bash
-/plugin marketplace add OWNER/threejs-product-skills
+/plugin marketplace add https://github.com/gyoridavid/threejs-product-skills
 /plugin install threejs-product-showcases@threejs-product-skills
 ```
 
@@ -26,7 +26,7 @@ Each page is a single HTML file that opens by double-click. A small Node tool re
 
 Copy `skills/threejs-product-showcases/` into `~/.claude/skills/` (personal) or `.claude/skills/` (one project).
 
-Then ask for it in plain words: *"Make a video of my site https://… scrolling on a MacBook"* or *"Put this GLB on a turntable with a reflection."*
+Then ask for it in plain words: _"Make a video of my site https://… scrolling on a MacBook"_ or _"Put this GLB on a turntable with a reflection."_
 
 ## Use it without an agent
 

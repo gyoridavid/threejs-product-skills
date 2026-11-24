@@ -15,6 +15,16 @@ _The page on screen is [Fernway](examples/demo-site/), a fictional site made for
 
 ## Install
 
+### In Claude
+
+Add the following marketplace (Add from repository)
+
+```markdown
+https://github.com/gyoridavid/threejs-product-skills
+```
+
+Then install the `threejs-product-showcases` plugin.
+
 ### As a Claude Code plugin
 
 ```bash

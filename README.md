@@ -15,6 +15,15 @@ _The page on screen is [Fernway](examples/demo-site/), a fictional site made for
 
 ## Install
 
+### In the terminal
+
+Run
+
+```bash
+claude plugin marketplace add gyoridavid/threejs-product-skills
+claude plugin install threejs-product-showcases@threejs-product-skills
+```
+
 ### In Claude
 
 Add the following marketplace (Add from repository)
